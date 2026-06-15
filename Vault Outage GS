@@ -1,0 +1,189 @@
+/**
+ * Web App Initializer
+ * Serves the HTML frontend interface to the user's browser.
+ * Configures the title and permissions architecture for standalone deployment.
+ */
+function doGet() {
+  return HtmlService.createTemplateFromFile('Index')
+      .evaluate()
+      .setTitle('Veeva Vault Impacted PODs Dashboard')
+      .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+}
+
+/**
+ * Fault-Tolerant High-Performance Query Processing Engine
+ * Locates required data matrices contextually by scanning spreadsheet header rows.
+ * Implements a strict 2,000 payload ceiling to protect browser network latency.
+ *
+ * @param {string} podFilter Separated target POD strings (e.g., "VV1-1 VV1-1045")
+ * @param {string} customerSearch Comma/Newline separated target customers (e.g., "23andMe, Aadi Bioscience")
+ * @return {Object} Statistical KPIs, aggregated chart structures, and data grid payloads
+ */
+function queryDashboardData(podFilter, customerSearch) {
+  var startTime = Date.now(); // Performance monitoring marker
+  
+  // Pointing directly back to your original master spreadsheet ID
+  var ss = SpreadsheetApp.openById("11lWaANx2PRj2CTtI93P0jlq_lEE9sGttLubeA6LxuTI");
+  var sheet = ss.getSheetByName("Sheet1") || ss.getSheets()[0];
+  var lastRow = sheet.getLastRow();
+  var lastColumn = sheet.getLastColumn();
+  
+  // Return empty data structures gracefully if sheet has no target rows
+  if (lastRow < 2) {
+    return { 
+      kpis: { customers: 0, vaults: 0, totalMatches: 0 }, 
+      domainChart: [], 
+      appChart: [], 
+      tableData: [], 
+      customerSummary: [] 
+    };
+  }
+  
+  // SCAN HEADERS WITH HIGH FAULT TOLERANCE: Pull Row 1 to dynamically map out data coordinates
+  var headers = sheet.getRange(1, 1, 1, lastColumn).getValues()[0];
+  
+  var idxVaultId    = headers.findIndex(function(h) { var s = h.toString().toLowerCase(); return s.indexOf("vault id") !== -1 || s.indexOf("vlt id") !== -1; });
+  var idxVaultName  = headers.findIndex(function(h) { var s = h.toString().toLowerCase(); return s.indexOf("vault name") !== -1 || s.indexOf("vlt name") !== -1; });
+  var idxApps       = headers.findIndex(function(h) { var s = h.toString().toLowerCase(); return s.indexOf("application") !== -1 || s.indexOf("app") !== -1; });
+    var idxDomainType = headers.findIndex(function(h) { 
+    var s = h.toString().toLowerCase(); 
+    return (s.indexOf("domain") !== -1 && s.indexOf("name") === -1) || s.indexOf("type") !== -1 || s.indexOf("env") !== -1; 
+  });
+  var idxPod        = headers.findIndex(function(h) { var s = h.toString().toLowerCase(); return s.indexOf("pod") !== -1; });
+  var idxCustomer   = headers.findIndex(function(h) { var s = h.toString().toLowerCase(); return s.indexOf("customer") !== -1 || s.indexOf("account") !== -1 || s.indexOf("client") !== -1; });
+
+  // HARDCODED BLUEPRINT FALLBACKS: Used if the text header names don't match perfectly
+  if (idxVaultId === -1) idxVaultId = 0;
+  if (idxVaultName === -1) idxVaultName = 1;
+  if (idxApps === -1) idxApps = 2;
+  if (idxDomainType === -1) idxDomainType = 4; // Index 4 is Column E (0-indexed: A=0, B=1, C=2, D=3, E=4)
+  if (idxPod === -1) idxPod = 5;
+  if (idxCustomer === -1) idxCustomer = 6;
+  
+  // SINGLE BATCH READING OPERATION: Pull all raw data rows into memory cache at once
+  var allValues = sheet.getRange(2, 1, lastRow - 1, lastColumn).getValues();
+  
+  var filteredTable = [];
+  var domainCounts = {};
+  var appCounts = {};
+  var uniqueCustomers = new Set();
+  var uniqueVaults = new Set();
+  var customerVaultCounts = {}; // Key-Value allocation map for Tab 1 Aggregations
+  
+  // FLEXIBLE POD PARSING ENGINE: Splits on spaces or commas cleanly
+  var searchPods = [];
+  if (podFilter && podFilter.toString().trim().toLowerCase() !== "all" && podFilter.toString().trim() !== "") {
+    searchPods = podFilter.toString().toLowerCase().split(/[\s,]+/).filter(function(item) {
+      return item.trim() !== "";
+    });
+  }
+
+  // BEST PRACTICE SECURE CUSTOMER PARSING ENGINE: Splits ONLY on commas or newlines
+  var searchCustomers = [];
+  if (customerSearch && customerSearch.toString().trim() !== "") {
+    searchCustomers = customerSearch.toString().toLowerCase().split(/,|\n/).map(function(item) {
+      return item.trim();
+    }).filter(function(item) {
+      return item !== ""; 
+    });
+  }
+
+  var totalMatches = 0;
+
+  // Local RAM engine processing loop
+  for (var i = 0; i < allValues.length; i++) {
+    var rowData = allValues[i];
+    
+    // Parse individual cells using our calculated dynamic header map coordinates
+    var vaultId    = rowData[idxVaultId];
+    var vaultName  = rowData[idxVaultName] ? rowData[idxVaultName].toString().trim() : "";
+    var apps       = rowData[idxApps] ? rowData[idxApps].toString().trim() : "";
+    var domainType = rowData[idxDomainType] ? rowData[idxDomainType].toString().trim() : "";
+    var pod        = rowData[idxPod] ? rowData[idxPod].toString().trim() : "";
+    var customer   = rowData[idxCustomer] ? rowData[idxCustomer].toString().trim() : "";
+    
+    // Safety drop: skip empty padding lines missing critical keys
+    if (!customer && !vaultName) continue;
+    
+    // Evaluate matching constraints for PODs
+    var matchPod = (searchPods.length === 0 || searchPods.indexOf(pod.toLowerCase()) !== -1);
+    
+    // Evaluate matching constraints for Customer Query Arrays (Locks space segments together)
+    var matchCust = true;
+    if (searchCustomers.length > 0) {
+      matchCust = false;
+      var lowerCustomer = customer.toLowerCase();
+      for (var k = 0; k < searchCustomers.length; k++) {
+        if (lowerCustomer.indexOf(searchCustomers[k]) !== -1) {
+          matchCust = true;
+          break; // Match found, break inner loop early for efficiency
+        }
+      }
+    }
+    
+    if (matchPod && matchCust) {
+      totalMatches++; 
+      
+      // Compute global statistical analytics metrics from ALL raw database matches
+      if (customer) {
+        uniqueCustomers.add(customer);
+        customerVaultCounts[customer] = (customerVaultCounts[customer] || 0) + 1;
+      }
+      if (vaultName) uniqueVaults.add(vaultName);
+      if (domainType) domainCounts[domainType] = (domainCounts[domainType] || 0) + 1;
+      
+      // Break down multi-app comma blocks into unique layout segments safely
+      if (apps) {
+        var appList = apps.split(',');
+        appList.forEach(function(a) {
+          var cleanApp = a.split(':')[0].trim();
+          if (cleanApp) appCounts[cleanApp] = (appCounts[cleanApp] || 0) + 1;
+        });
+      }
+      
+      // OPTIMIZED ARCHITECTURE CEILING: Cap array generation size safely at 2,000 rows
+      if (filteredTable.length < 2000) {
+        filteredTable.push({
+          pod: pod,
+          customerName: customer,
+          appName: apps,
+          domainType: domainType,
+          id: vaultId,
+          vaultName: vaultName
+        });
+      }
+    }
+  }
+  
+  // Format and build Tab 1 summary array object from calculated metrics
+  var customerSummaryData = [];
+  for (var cName in customerVaultCounts) {
+    customerSummaryData.push({
+      customerName: cName,
+      impactedVaultsCount: customerVaultCounts[cName]
+    });
+  }
+  
+  // Format packages explicitly matching Google Charts specs
+  var domainChartData = [['Domain Type', 'Count']];
+  for (var dKey in domainCounts) domainChartData.push([dKey, domainCounts[dKey]]);
+  
+  var appChartData = [['App Name', 'Count']];
+  for (var aKey in appCounts) appChartData.push([aKey, appCounts[aKey]]);
+  
+  // Performance reporting diagnostic logs
+  console.log("queryDashboardData complete. Execution timeline: " + (Date.now() - startTime) + " ms");
+  
+  // Return the data packages back to the client UI handler
+  return {
+    kpis: { 
+      customers: uniqueCustomers.size, 
+      vaults: uniqueVaults.size, 
+      totalMatches: totalMatches 
+    },
+    domainChart: domainChartData,
+    appChart: appChartData,
+    tableData: filteredTable,
+    customerSummary: customerSummaryData
+  };
+}
