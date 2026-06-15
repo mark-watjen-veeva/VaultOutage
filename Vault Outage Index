@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <title>Vault Outage Info</title>
+  
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/tailwindcss/2.2.19/tailwind.min.css" rel="stylesheet">
+  <script type="text/javascript" src="https://www.gstatic.com/charts/loader.js"></script>
+  
+  <link href="https://unpkg.com/tabulator-tables@5.5.2/dist/css/tabulator_semanticui.min.css" rel="stylesheet">
+  <script type="text/javascript" src="https://unpkg.com/tabulator-tables@5.5.2/dist/js/tabulator.min.js"></script>
+
+  <style>
+    body { background-color: #f8fafc; font-family: system-ui, -apple-system, sans-serif; }
+    .kpi-container { background-color: #fef3c7; border: 1px solid #fde68a; }
+    .loading-spinner { border-top-color: #2563eb; animation: spin 1s linear infinite; }
+    @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    .tab-active { border-bottom-width: 3px; border-color: #2563eb; color: #1d4ed8; font-weight: 700; }
+    
+    /* Layout corrections for inserting custom labels into native footer components */
+    .tabulator-footer {
+      display: flex !important;
+      flex-direction: row !important;
+      align-items: center !important;
+      justify-content: space-between !important;
+      padding: 8px 12px !important;
+      background-color: #f9fafb !important;
+      border-top: 1px solid #e5e7eb !important;
+    }
+
+    .tabulator-paginator {
+      margin-left: auto !important; 
+      display: flex !important;
+      gap: 4px !important;
+      align-items: center !important;
+    }
+
+    .custom-footer-counter {
+      font-size: 0.75rem;
+      font-weight: 700;
+      color: #4b5563;
+      background-color: #e5e7eb;
+      padding: 0.35rem 0.65rem;
+      border-radius: 0.375rem;
+      white-space: nowrap;
+    }
+
+    /* Accordion / Group Header UI enhancements */
+    .tabulator-row-group {
+      cursor: pointer !important;
+      transition: background-color 0.15s ease-in-out;
+    }
+    
+    .tabulator-row-group:hover {
+      background-color: #f1f5f9 !important; /* Soft Tailwind gray highlight on hover */
+    }
+
+    /* Subtle rotation animation for the SemanticUI arrow indicator when toggled */
+    .tabulator-row-group .tabulator-arrow {
+      transition: transform 0.2s ease-in-out;
+    }
+  </style>
+</head>
+<body class="p-6">
+
+  <div class="max-w-7xl mx-auto">
+    
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 items-center bg-white p-6 rounded-xl shadow-sm border border-gray-100 mb-6">
+      <div>
+        <h1 class="text-2xl font-black text-red-900 tracking-wide">Vault Outage Info</h1>
+        <p class="text-xs text-gray-400 mt-1">Impacted PODs Dashboard</p>
+      </div>
+      
+      <div class="flex space-x-4 lg:col-span-2 justify-end">
+        <div class="kpi-container px-6 py-4 rounded-xl shadow-sm text-center w-44">
+          <div id="kpi-customers" class="text-3xl font-extrabold text-amber-900">0</div>
+          <div class="text-xs font-bold text-amber-800 uppercase tracking-wider mt-1">Unique Customers</div>
+        </div>
+        <div class="kpi-container px-6 py-4 rounded-xl shadow-sm text-center w-44">
+          <div id="kpi-vaults" class="text-3xl font-extrabold text-amber-900">0</div>
+          <div class="text-xs font-bold text-amber-800 uppercase tracking-wider mt-1">Total Vaults</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="bg-white p-4 rounded-xl shadow-sm border border-gray-100 mb-6 flex flex-wrap items-center gap-4">
+      <div class="flex flex-col">
+        <label class="text-xs font-bold text-gray-500 uppercase mb-1">Target POD(s)</label>
+        <input type="text" id="podFilter" placeholder="e.g. VV1-1 VV1-1045 (or blank)" class="border border-gray-300 rounded-lg p-2 bg-gray-50 text-sm text-gray-800 focus:ring-2 focus:ring-blue-500 w-64">
+      </div>
+      
+      <div class="flex flex-col flex-grow">
+        <label class="text-xs font-bold text-gray-500 uppercase mb-1">Customer Name Search</label>
+        <input type="text" id="custSearch" placeholder="Search customer (separate multiple accounts with a comma or new line)..." class="border border-gray-300 rounded-lg p-2 bg-gray-50 text-sm text-gray-800 focus:ring-2 focus:ring-blue-500">
+      </div>
+      
+      <div class="flex flex-col justify-end pt-5">
+        <button onclick="executeSearch()" id="queryBtn" class="bg-blue-600 hover:bg-blue-700 text-white font-bold px-8 py-2 rounded-lg text-sm transition-all shadow-sm flex items-center justify-center">
+          <span id="spinnerIcon" class="loading-spinner hidden rounded-full border-2 border-t-2 border-gray-200 h-4 w-4 mr-2"></span>
+          <span id="btnText">Search Database</span>
+        </button>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+      <div class="bg-white p-4 rounded-xl shadow-sm border border-gray-100">
+        <div id="domain_chart_div" class="w-full h-64 flex items-center justify-center text-sm text-gray-400 font-medium bg-gray-50 rounded-lg border border-dashed">
+          Charts populate after query execution
+        </div>
+      </div>
+      <div class="bg-white p-4 rounded-xl shadow-sm border border-gray-100">
+        <div id="app_chart_div" class="w-full h-64 flex items-center justify-center text-sm text-gray-400 font-medium bg-gray-50 rounded-lg border border-dashed">
+          Charts populate after query execution
+        </div>
+      </div>
+    </div>
+
+    <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+      <div class="flex flex-wrap justify-between items-center mb-4 border-b border-gray-200 pb-2 gap-4">
+        
+        <div class="flex space-x-6">
+          <button onclick="switchTab('summary')" id="tab-summary-btn" class="tab-active text-sm pb-2 focus:outline-none transition-all">
+            Impacted Customers Summary
+          </button>
+          <button onclick="switchTab('detail')" id="tab-detail-btn" class="text-gray-500 hover:text-blue-600 text-sm pb-2 focus:outline-none transition-all">
+            Detailed Vault Audit
+          </button>
+        </div>
+        
+        <div class="flex items-center space-x-4">
+          <div id="accordion-controls" class="hidden flex items-center bg-gray-100 p-1 rounded-lg">
+            <button onclick="toggleAllGroups()" id="masterGroupBtn" class="text-xs font-bold text-gray-600 hover:text-blue-600 hover:bg-white px-3 py-1 rounded transition-all shadow-sm">
+              ↕️ Collapse All
+            </button>
+          </div>
+
+          <span id="search-status" class="text-sm font-semibold text-blue-600 bg-blue-50 px-3 py-1 rounded-full">
+            Enter parameters above to index records instantly
+          </span>
+        </div>
+      </div>
+
+      <div id="summary-table-container" class="w-full">
+        <div id="summary-table"></div>
+      </div>
+      <div id="detail-table-container" class="w-full hidden">
+        <div id="detail-table"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    google.charts.load('current', {'packages':['corechart']});
+    let summaryWidget = null;
+    let detailWidget = null;
+    let currentActiveTab = 'summary';
+    let allGroupsAreOpen = true; // Global tracker state
+
+    window.addEventListener('DOMContentLoaded', () => {
+      buildTables(); 
+      setupEnterKeySearch();
+    });
+
+    /**
+     * Binds Enter key press listeners to search inputs for desktop user workflow optimizations.
+     */
+    function setupEnterKeySearch() {
+      const inputs = [document.getElementById('podFilter'), document.getElementById('custSearch')];
+      inputs.forEach(input => {
+        if (input) {
+          input.addEventListener('keydown', function(event) {
+            if (event.key === 'Enter' || event.keyCode === 13) {
+              event.preventDefault(); 
+              executeSearch();
+            }
+          });
+        }
+      });
+    }
+
+    function switchTab(tabName) {
+      currentActiveTab = tabName;
+      const summaryContainer = document.getElementById('summary-table-container');
+      const detailContainer = document.getElementById('detail-table-container');
+      const summaryBtn = document.getElementById('tab-summary-btn');
+      const detailBtn = document.getElementById('tab-detail-btn');
+      const accordionControls = document.getElementById('accordion-controls');
+
+      if (tabName === 'summary') {
+        summaryContainer.classList.remove('hidden');
+        detailContainer.classList.add('hidden');
+        accordionControls.classList.add('hidden');
+        summaryBtn.className = "tab-active text-sm pb-2 focus:outline-none transition-all";
+        detailBtn.className = "text-gray-500 hover:text-blue-600 text-sm pb-2 focus:outline-none transition-all";
+        if(summaryWidget) summaryWidget.redraw(); 
+      } else {
+        detailContainer.classList.remove('hidden');
+        summaryContainer.classList.add('hidden');
+        accordionControls.classList.remove('hidden');
+        detailBtn.className = "tab-active text-sm pb-2 focus:outline-none transition-all";
+        summaryBtn.className = "text-gray-500 hover:text-blue-600 text-sm pb-2 focus:outline-none transition-all";
+        if(detailWidget) detailWidget.redraw();
+      }
+    }
+
+    /**
+     * Master Global Accordion Toggler
+     * Loops through every underlying data row directly to toggle their parent POD groups.
+     */
+    function toggleAllGroups() {
+      if (!detailWidget) return;
+      
+      const btn = document.getElementById('masterGroupBtn');
+      allGroupsAreOpen = !allGroupsAreOpen; // Flip state
+      
+      // Get all raw row components across ALL pages
+      const allRows = detailWidget.getRows("data");
+      const processedGroups = new Set();
+      
+      allRows.forEach(row => {
+        const group = row.getGroup();
+        if (group && !processedGroups.has(group)) {
+          processedGroups.add(group);
+          if (allGroupsAreOpen) {
+            group.show();
+          } else {
+            group.hide();
+          }
+        }
+      });
+
+      // Update button text
+      btn.innerHTML = allGroupsAreOpen ? "↕️ Collapse All" : "↔️ Expand All";
+    }
+
+    function executeSearch() {
+      const btn = document.getElementById('queryBtn');
+      const btnText = document.getElementById('btnText');
+      const spinner = document.getElementById('spinnerIcon');
+      
+      btn.disabled = true;
+      btnText.innerText = "Querying Sheet...";
+      spinner.classList.remove('hidden');
+      btn.className = "bg-gray-400 text-white font-bold px-8 py-2 rounded-lg text-sm cursor-not-allowed flex items-center justify-center";
+
+      let podVal = document.getElementById('podFilter').value.trim();
+      let searchVal = document.getElementById('custSearch').value.trim();
+      
+      if(!podVal) podVal = "All";
+
+      google.script.run
+        .withSuccessHandler(function(response) {
+          document.getElementById('kpi-customers').innerText = response.kpis.customers;
+          document.getElementById('kpi-vaults').innerText = response.kpis.vaults;
+          
+          drawChart('domain_chart_div', 'Environments Mix (Domain Type)', response.domainChart, '#3b82f6');
+          drawChart('app_chart_div', 'Applications Families Count', response.appChart, '#6366f1');
+          
+          // Clear active local search states upon executing a fresh global data query pass
+          if (summaryWidget) summaryWidget.clearHeaderFilter();
+          if (detailWidget) detailWidget.clearFilter();
+
+          // Reset master button state when new dataset is loaded
+          allGroupsAreOpen = true;
+          const masterBtn = document.getElementById('masterGroupBtn');
+          if (masterBtn) masterBtn.innerHTML = "↕️ Collapse All";
+
+          if(summaryWidget && response.customerSummary) summaryWidget.setData(response.customerSummary);
+          if(detailWidget && response.tableData) detailWidget.setData(response.tableData);
+          
+          let statusElement = document.getElementById('search-status');
+          let summaryLength = response.customerSummary ? response.customerSummary.length : 0;
+          
+          if (response.kpis.totalMatches > 2000) {
+            statusElement.innerText = "Showing first 2000 rows on Detail Tab of " + response.kpis.totalMatches + " total items.";
+            statusElement.className = "text-sm font-semibold text-amber-600 bg-amber-50 px-3 py-1 rounded-full";
+          } else {
+            statusElement.innerText = "Found " + response.kpis.totalMatches + " records across " + summaryLength + " accounts.";
+            statusElement.className = "text-sm font-semibold text-green-600 bg-green-50 px-3 py-1 rounded-full";
+          }
+          
+          btn.disabled = false;
+          btnText.innerText = "Search Database";
+          spinner.classList.add('hidden');
+          btn.className = "bg-blue-600 hover:bg-blue-700 text-white font-bold px-8 py-2 rounded-lg text-sm transition-all shadow-sm flex items-center justify-center";
+        })
+        .queryDashboardData(podVal, searchVal);
+    }
+
+ function drawChart(divId, title, chartData, color) {
+      if(chartData.length <= 1) {
+        document.getElementById(divId).innerHTML = "<div class='text-center p-24 text-sm text-gray-400 font-medium bg-gray-50 w-full rounded-lg'>No data matched selections</div>";
+        return;
+      }
+      const formattedData = [chartData[0].concat([{ role: 'style' }])];
+      for(let i=1; i<chartData.length; i++) { formattedData.push(chartData[i].concat([color])); }
+      const dataTable = google.visualization.arrayToDataTable(formattedData);
+      
+      // OPTIMIZED CHART OPTIONS: Cleans up axis labels for distinct groupings
+      const options = { 
+        title: title, 
+        chartArea: {width: '80%', height: '70%'}, 
+        legend: { position: 'none' },
+        hAxis: { slantedText: false } // No more vertical unreadable text!
+      };
+      
+      const chart = new google.visualization.ColumnChart(document.getElementById(divId));
+      chart.draw(dataTable, options);
+    }
+    /**
+     * Runtime Context Footer Renderer
+     */
+    function updateLiveFooterRangeText(tableInstance, footerContainerElement, mode = 'vaults') {
+      if (!tableInstance || !footerContainerElement) return;
+
+      let counterLabel = footerContainerElement.querySelector(".custom-footer-counter");
+      if (!counterLabel) {
+        counterLabel = document.createElement("div");
+        counterLabel.className = "custom-footer-counter";
+        footerContainerElement.insertBefore(counterLabel, footerContainerElement.firstChild);
+      }
+
+      const rowCount = tableInstance.getDataCount("active");
+      if (rowCount === 0) {
+        counterLabel.innerHTML = "No active records loaded";
+        counterLabel.style.background = "transparent";
+        counterLabel.style.fontWeight = "normal";
+        return;
+      }
+      
+      counterLabel.style.background = "#e5e7eb";
+      counterLabel.style.fontWeight = "700";
+
+      const pageSize = tableInstance.getPageSize() || 15;
+      const currentPage = tableInstance.getPage() || 1;
+      const totalPages = Math.ceil(rowCount / pageSize) || 1;
+
+      const startRow = ((currentPage - 1) * pageSize) + 1;
+      const endRow = Math.min(currentPage * pageSize, rowCount);
+
+      let textPayload = "Page " + currentPage + " of " + totalPages + " | Showing " + startRow + " - " + endRow + " of " + rowCount + " " + mode;
+      
+      if (mode === 'accounts') {
+        let totalVaultsSum = 0;
+        tableInstance.getData("active").forEach(row => {
+          totalVaultsSum += (Number(row.impactedVaultsCount) || 0);
+        });
+        textPayload += " (" + totalVaultsSum + " Total Impacted Vaults)";
+      }
+
+      counterLabel.innerHTML = textPayload;
+    }
+
+    function buildTables() {
+      // Tab 1: Summary Grid
+      summaryWidget = new Tabulator("#summary-table", {
+        data: [],
+        layout: "fitColumns",
+        placeholder:"<div class='p-12 text-sm font-semibold text-gray-400 text-center uppercase'>Execute search to populate account overview index</div>",
+        pagination: "local",
+        paginationSize: 15,
+        columns: [
+          {
+            title: "Customer Name", 
+            field: "customerName", 
+            sorter: "string", 
+            headerFilter: "input",
+            headerFilterPlaceholder: "🔍 Filter accounts here..."
+          },
+          {title: "Impacted Vaults Total Count", field: "impactedVaultsCount", sorter: "number", width: 250}
+        ]
+      });
+
+      summaryWidget.on("tableBuilt", function() {
+        updateLiveFooterRangeText(this, this.element.querySelector(".tabulator-footer"), 'accounts');
+      });
+      summaryWidget.on("pageChanged", function() {
+        updateLiveFooterRangeText(this, this.element.querySelector(".tabulator-footer"), 'accounts');
+      });
+      
+      // Dynamic Cross-Filter Tab Synchronization Sync Hook
+      summaryWidget.on("dataFiltered", function(filters, rows) {
+        updateLiveFooterRangeText(this, this.element.querySelector(".tabulator-footer"), 'accounts');
+        
+        if (detailWidget) {
+          const customerFilter = filters.find(f => f.field === "customerName");
+          if (customerFilter && customerFilter.value) {
+            detailWidget.setFilter("customerName", "like", customerFilter.value);
+          } else {
+            detailWidget.clearFilter();
+          }
+        }
+      });
+      
+      summaryWidget.on("dataChanged", function() {
+        updateLiveFooterRangeText(this, this.element.querySelector(".tabulator-footer"), 'accounts');
+      });
+      summaryWidget.on("dataBound", function() {
+        updateLiveFooterRangeText(this, this.element.querySelector(".tabulator-footer"), 'accounts');
+      });
+      summaryWidget.on("renderComplete", function() {
+        updateLiveFooterRangeText(this, this.element.querySelector(".tabulator-footer"), 'accounts');
+      });
+
+      // Tab 2: Detailed Row Ledger
+      detailWidget = new Tabulator("#detail-table", {
+        data: [],
+        layout: "fitColumns",
+        placeholder:"<div class='p-12 text-sm font-semibold text-gray-400 text-center uppercase'>Execute search to populate detailed log index</div>",
+        pagination: "local",
+        paginationSize: 15,
+        groupBy: "pod",
+        groupToggleElement: "header", 
+        groupHeader: function(value, count){
+          return "<span class='font-bold text-red-950'>" + (value ? value : "Unassigned POD") + "</span> <span class='text-xs text-gray-500 ml-2'>(" + count + " items in group view)</span>";
+        },
+        columns: [
+          {title: "Customer Name", field: "customerName", sorter: "string"},
+          {title: "Applications", field: "appName", sorter: "string"},
+          {title: "Domain Type", field: "domainType", sorter: "string"},
+          {title: "Vault ID", field: "id", width: 110},
+          {title: "Vault Name", field: "vaultName", sorter: "string"}
+        ]
+      });
+
+      detailWidget.on("tableBuilt", function() {
+        updateLiveFooterRangeText(this, this.element.querySelector(".tabulator-footer"), 'vaults');
+      });
+      detailWidget.on("pageChanged", function() {
+        updateLiveFooterRangeText(this, this.element.querySelector(".tabulator-footer"), 'vaults');
+      });
+      detailWidget.on("dataFiltered", function() {
+        updateLiveFooterRangeText(this, this.element.querySelector(".tabulator-footer"), 'vaults');
+      });
+      detailWidget.on("dataChanged", function() {
+        updateLiveFooterRangeText(this, this.element.querySelector(".tabulator-footer"), 'vaults');
+      });
+      detailWidget.on("dataBound", function() {
+        updateLiveFooterRangeText(this, this.element.querySelector(".tabulator-footer"), 'vaults');
+      });
+      detailWidget.on("renderComplete", function() {
+        updateLiveFooterRangeText(this, this.element.querySelector(".tabulator-footer"), 'vaults');
+      });
+    }
+  </script>
+</body>
+</html>
